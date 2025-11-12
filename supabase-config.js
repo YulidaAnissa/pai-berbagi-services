@@ -1,0 +1,7 @@
+const SUPABASE_URL = "https://aiilwuvdqmfshpwpmkfi.supabase.co";
+const SUPABASE_SERVICE_ROLE = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFpaWx3dXZkcW1mc2hwd3Bta2ZpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MDMxMDQ4MiwiZXhwIjoyMDc1ODg2NDgyfQ.1v_Ttq6mzYvU3Y1gkX7S0A9f8bvdFg1r02yB0Ew7d0w";
+
+export default {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE
+};
