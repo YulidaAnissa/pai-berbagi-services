@@ -6,6 +6,8 @@ const { SUPABASE_URL, SUPABASE_SERVICE_ROLE } = require("./supabase-config").def
 const bodyParser = require("body-parser");
 const fs = require("fs");
 const path = require("path");
+const pool = require("./db-config");
+
 
 // Konfigurasi Cloudinary
 
@@ -41,23 +43,18 @@ var upload = multer({
 //JENJANG ROUTES
 app.get("/jenjang", async (req, res) => {
   try {
-    const { data, error } = await db.from("jenjang")
-      .select(`
-        idJenjang,
-        jenjang,
-        images,
-        modul ( idModul )
+    const result = await pool.query(`
+      SELECT j."idJenjang",
+       j."jenjang",
+       j."image",
+       COUNT(m."idModul") AS count
+      FROM modul.jenjang j
+      LEFT JOIN modul.modul m ON j."idJenjang" = m."idJenjang"
+      GROUP BY j."idJenjang", j."jenjang", j."image"
+      ORDER BY j."idJenjang" ASC;
     `);
-    if (error) throw error;
 
-    const result = data.map(j => ({
-      idJenjang: j.idJenjang,
-      jenjang: j.jenjang,
-      images: j.images,
-      count: j.modul ? j.modul.length : 0
-    }));
-
-    res.json(result);
+    res.json(result.rows);
   } catch (error) {
     console.error("Gagal mengambil data jenjang:", error);
     res.status(500).json({ error: "Terjadi kesalahan saat mengambil data" });
@@ -68,7 +65,7 @@ app.get("/jenjang", async (req, res) => {
 const uploadFileJenjang = async (filePath) => {
   try {
     const result = await cloudinary.uploader.upload(filePath, {
-      folder: "jenjang_images",
+      folder: "jenjang_image",
     });
     return result;
   } catch (error) {
@@ -77,24 +74,56 @@ const uploadFileJenjang = async (filePath) => {
   }
 }
 
-app.post('/jenjang', upload.single("file"), async (req, res) => {
+// app.post('/jenjang', upload.single("file"), async (req, res) => {
+//   try {
+//     const filePath = req.file.path;
+//     const { jenjang } = req.body;
+//     const result = await uploadFileJenjang(filePath);
+//     const addData = await db.from("jenjang").insert({ jenjang: jenjang, images: result.secure_url });
+//     res.json(addData);
+//   } catch (error) {
+//     console.error("Error handling file upload:", error);
+//     res.status(500).json({ error: "Internal Server Error" });
+//   }
+// });
+
+app.post("/jenjang", upload.single("file"), async (req, res) => {
   try {
     const filePath = req.file.path;
     const { jenjang } = req.body;
-    const result = await uploadFileJenjang(filePath);
-    const addData = await db.from("jenjang").insert({ jenjang: jenjang, images: result.secure_url });
-    res.json(addData);
+    const resultUpload = await uploadFileJenjang(filePath);
+
+    const insertQuery = `
+      INSERT INTO modul.jenjang (jenjang, image)
+      VALUES ($1, $2) RETURNING *
+    `;
+    const values = [jenjang, resultUpload.secure_url];
+
+    const result = await pool.query(insertQuery, values);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error("Error handling file upload:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
+
 app.delete("/jenjang/:id", async (req, res) => {
+  // try {
+  //   const { id } = req.params;
+  //   const deleteData = await db.from("jenjang").delete().eq("idJenjang", id);
+  //   res.json(deleteData);
+  // } catch (error) {
+  //   console.error("Error deleting jenjang:", error);
+  //   res.status(500).json({ error: "Internal Server Error" });
+  // }
   try {
     const { id } = req.params;
-    const deleteData = await db.from("jenjang").delete().eq("idJenjang", id);
-    res.json(deleteData);
+    const result = await pool.query(
+      `DELETE FROM modul.jenjang WHERE "idJenjang" = $1 RETURNING *`,
+      [id]
+    );
+    res.json(result.rows[0]);
   } catch (error) {
     console.error("Error deleting jenjang:", error);
     res.status(500).json({ error: "Internal Server Error" });
@@ -103,59 +132,127 @@ app.delete("/jenjang/:id", async (req, res) => {
 
 //MODUL ROUTES
 app.get("/modul", async (req, res) => {
-  const { search, id, sort, limit } = req.query;
-  let query = db
-    .from("modul")
-    .select("*, jenjang(*)", { count: "exact" });
+  const { search, sort, limit, id, kategori } = req.query;
+  // let query = db
+  //   .from("modul")
+  //   .select("*, jenjang(*)", { count: "exact" });
+
+  // if (id) {
+  //   query = query.eq("idJenjang", id);
+  // }
+
+  let query = `
+    SELECT m.*, j.*
+    FROM modul.modul m
+    LEFT JOIN modul.jenjang j ON m."idJenjang" = j."idJenjang"
+  `;
+  let params = [];
+
+  let conditions = [];
 
   if (id) {
-    query = query.eq("idJenjang", id);
+    params.push(id);
+    conditions.push(`j."idJenjang" = $${params.length}`);
   }
 
-  // Pencarian berdasarkan title / desc (case-insensitive)
-  if (search) {
-    query = query.or(`title.ilike.%${search}%,desc.ilike.%${search}%,name.ilike.%${search}%`);
+  if (kategori) {
+    params.push(kategori);
+    conditions.push(`m."idKategori" = $${params.length}`);
   }
+
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`(m."title" ILIKE $${params.length} OR m."desc" ILIKE $${params.length} OR m."name" ILIKE $${params.length})`);
+  }
+
+  if (conditions.length > 0) {
+    query += " WHERE " + conditions.join(" AND ");
+  }
+
 
   // Sort logic
+  // if (sort === "asc" || sort === "desc") {
+  //   query = query.order("createdAt", { ascending: sort === "asc" });
+  // } else if (sort === "random") {
+  //   query = query.order("RANDOM()");
+  // }
   if (sort === "asc" || sort === "desc") {
-    query = query.order("createdAt", { ascending: sort === "asc" });
+    query += ` ORDER BY m."createdAt" ${sort.toUpperCase()}`;
   } else if (sort === "random") {
-    query = query.order("RANDOM()");
+    query += ` ORDER BY RANDOM()`;
   }
 
+
   // Limit logic (optional)
+  // if (limit) {
+  //   const maxLimit = parseInt(limit);
+  //   if (!isNaN(maxLimit)) {
+  //     query = query.limit(maxLimit);
+  //   }
+  // }
   if (limit) {
     const maxLimit = parseInt(limit);
     if (!isNaN(maxLimit)) {
-      query = query.limit(maxLimit);
+      params.push(maxLimit);
+      query += ` LIMIT $${params.length}`;
     }
   }
-
-  const { data, count, status } = await query;
-  res.json({ data, count, status });
+  // const { data, count, status } = await query;
+  // res.json({ data, count, status });
+  try {
+    const { rows } = await pool.query(query, params);
+    res.json({ data: rows, count: rows.length, status: 200 });
+  } catch (err) {
+    console.error("Error fetching modul:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 //get modul by jenjang
 app.get("/modul/jenjang/:id", async (req, res) => {
-  try {
-    const idJenjang = req.params.id;
-    const { search } = req.query;
-    let query = db
-      .from("modul")
-      .select("*", { count: "exact" })
-      .eq("idJenjang", idJenjang);
-    // Pencarian berdasarkan title / desc (case-insensitive)
-    if (search) {
-      query = query.or(`title.ilike.%${search}%,desc.ilike.%${search}%,name.ilike.%${search}%`);
-    }
-    const { data, count, status } = await query;
-    res.json({ data, count, status });
-  } catch (error) {
-    console.error("Error fetching modul by jenjang:", error);
-    res.status(500).json({ error: "Internal server error" });
+  // try {
+  //   const idJenjang = req.params.id;
+  //   const { search } = req.query;
+  //   let query = db
+  //     .from("modul")
+  //     .select("*", { count: "exact" })
+  //     .eq("idJenjang", idJenjang);
+  //   // Pencarian berdasarkan title / desc (case-insensitive)
+  //   if (search) {
+  //     query = query.or(`title.ilike.%${search}%,desc.ilike.%${search}%,name.ilike.%${search}%`);
+  //   }
+  //   const { data, count, status } = await query;
+  //   res.json({ data, count, status });
+  // } catch (error) {
+  //   console.error("Error fetching modul by jenjang:", error);
+  //   res.status(500).json({ error: "Internal server error" });
+  // }
+  const idJenjang = req.params.id;
+  const { search } = req.query;
+
+  let sql = `
+    SELECT *
+    FROM modul.modul
+    WHERE "idJenjang" = $1
+  `;
+  let params = [idJenjang];
+  console.log('serach ',search);
+
+  if (search) {
+    params.push(`%${search}%`);
+    console.log('length ',params.length);
+    sql += ` AND ("title" ILIKE $${params.length} OR "desc" ILIKE $${params.length} OR "name" ILIKE $${params.length})`;
   }
 
+  console.log('sql ',params);
+
+  try {
+    const { rows } = await pool.query(sql, params);
+    res.json({ data: rows, count: rows.length, status: 200 });
+  } catch (err) {
+    console.error("Error fetching modul by jenjang:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // Fungsi upload ke Cloudinary
@@ -188,43 +285,49 @@ const uploadFileModul = async (filePath) => {
 // Endpoint upload modul
 app.post("/modul", upload.single("file"), async (req, res) => {
   try {
-    const { idJenjang, title, desc, name } = req.body;
+    const { idJenjang, title, desc, name, idKategori, link } = req.body;
     const filePath = req.file?.path;
 
-    if (!filePath) {
-      return res.status(400).json({ error: "File tidak ditemukan" });
+    let fileUrl = null;
+    if(parseInt(idKategori) === 3){
+      if (!filePath) {
+        return res.status(400).json({ error: "File tidak ditemukan" });
+      }
+      // Upload file ke Cloudinary
+      const result = await uploadFileModul(filePath);
+      fileUrl = result.secure_url;
+    } else {
+      if (!link) {
+        return res.status(400).json({ error: "Link diperlukan untuk kategori ini" });
+      }
+      fileUrl = link;
     }
 
-    const result = await uploadFileModul(filePath);
+    // Insert ke tabel modul
+    const insertSql = `
+      INSERT INTO modul.modul ("idJenjang", "title", "desc", "name", "files", "idKategori")
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *;
+    `;
+    const insertParams = [idJenjang, title, desc, name, fileUrl, idKategori];
 
-    const { data: inserted, error: insertError } = await db
-      .from("modul")
-      .insert({
-        idJenjang,
-        title,
-        desc,
-        name,
-        files: result.secure_url,
-      })
-      .select();
+    const { rows: insertedRows } = await pool.query(insertSql, insertParams);
 
-    if (insertError || !inserted?.[0]) {
+    if (!insertedRows?.[0]) {
       throw new Error("Gagal menyimpan data modul");
     }
 
-    const idModul = inserted[0].idModul;
+    const idModul = insertedRows[0].idModul;
 
-    const { data: insertedData, error: fetchError } = await db
-      .from("modul")
-      .select("*")
-      .eq("idModul", idModul)
-      .single();
+    // Ambil kembali data modul yang baru diinsert
+    const fetchSql = `SELECT * FROM modul.modul WHERE "idModul" = $1;`;
+    const { rows: fetchedRows } = await pool.query(fetchSql, [idModul]);
 
     res.json({
       message: "Modul berhasil diupload",
-      fileUrl: result.secure_url,
+      fileUrl,
       idModul,
-      data: insertedData,
+      data: fetchedRows[0],
     });
   } catch (error) {
     console.error("Error handling file upload:", error);
@@ -234,10 +337,25 @@ app.post("/modul", upload.single("file"), async (req, res) => {
 
 
 app.delete("/modul/:id", async (req, res) => {
+  // try {
+  //   const { id } = req.params;
+  //   const deleteData = await db.from("modul").delete().eq("idModul", id);
+  //   res.json(deleteData);
+  // } catch (error) {
+  //   console.error("Error deleting modul:", error);
+  //   res.status(500).json({ error: "Internal Server Error" });
+  // }
   try {
     const { id } = req.params;
-    const deleteData = await db.from("modul").delete().eq("idModul", id);
-    res.json(deleteData);
+
+    const sql = `
+      DELETE FROM modul.modul
+      WHERE "idModul" = $1
+      RETURNING *;
+    `;
+    const { rows } = await pool.query(sql, [id]);
+
+    res.json({ data: rows, status: 200 });
   } catch (error) {
     console.error("Error deleting modul:", error);
     res.status(500).json({ error: "Internal Server Error" });
@@ -248,6 +366,7 @@ app.delete("/modul/:id", async (req, res) => {
 app.get("/modul/:id", async (req, res) => {
   
   const { id } = req.params;
+  console.log('modul id ',id);
 
   // Validasi ID
   if (!id) {
@@ -255,19 +374,62 @@ app.get("/modul/:id", async (req, res) => {
   }
 
   // Query modul dengan join ke jenjang (hanya namaJenjang)
-  const query = db
-    .from("modul")
-    .select("*, jenjang(*)", { count: "exact" })
-    .eq("idModul", id)
-    .single(); // Ambil satu baris
+  // const query = db
+  //   .from("modul")
+  //   .select("*, jenjang(*)", { count: "exact" })
+  //   .eq("idModul", id)
+  //   .single(); // Ambil satu baris
 
-  const { data, error, status } = await query;
+  // const { data, error, status } = await query;
 
-  if (error) {
-    return res.status(500).json({ error: error.message });
+  // if (error) {
+  //   return res.status(500).json({ error: error.message });
+  // }
+
+  // res.status(200).json({ data, status });
+  const sql = `
+    SELECT m.*, j."jenjang"
+    FROM modul.modul m
+    LEFT JOIN modul.jenjang j ON m."idJenjang" = j."idJenjang"
+    WHERE m."idModul" = $1
+    LIMIT 1;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [id]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Modul tidak ditemukan." });
+    }
+
+    res.status(200).json({ data: rows[0], status: 200 });
+  } catch (error) {
+    console.error("Error fetching modul by id:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 
-  res.status(200).json({ data, status });
+});
+
+//KATEGORI
+app.get("/kategori", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT k."idKategori",
+       k."kategori",
+       k."icon",
+       k."color",
+       COUNT(m."idModul") AS count
+      FROM kategori k
+      LEFT JOIN modul.modul m ON k."idKategori" = m."idKategori"
+      GROUP BY k."idKategori", k."kategori"
+      ORDER BY k."idKategori" ASC;
+    `);
+
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Gagal mengambil data kategori:", error);
+    res.status(500).json({ error: "Terjadi kesalahan saat mengambil data" });
+  }
 
 });
 
