@@ -48,8 +48,8 @@ app.get("/jenjang", async (req, res) => {
        j."jenjang",
        j."image",
        COUNT(m."idModul") AS count
-      FROM modul.jenjang j
-      LEFT JOIN modul.modul m ON j."idJenjang" = m."idJenjang"
+      FROM jenjang j
+      LEFT JOIN modul m ON j."idJenjang" = m."idJenjang"
       GROUP BY j."idJenjang", j."jenjang", j."image"
       ORDER BY j."idJenjang" ASC;
     `);
@@ -94,7 +94,7 @@ app.post("/jenjang", upload.single("file"), async (req, res) => {
     const resultUpload = await uploadFileJenjang(filePath);
 
     const insertQuery = `
-      INSERT INTO modul.jenjang (jenjang, image)
+      INSERT INTO jenjang (jenjang, image)
       VALUES ($1, $2) RETURNING *
     `;
     const values = [jenjang, resultUpload.secure_url];
@@ -120,7 +120,7 @@ app.delete("/jenjang/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const result = await pool.query(
-      `DELETE FROM modul.jenjang WHERE "idJenjang" = $1 RETURNING *`,
+      `DELETE FROM jenjang WHERE "idJenjang" = $1 RETURNING *`,
       [id]
     );
     res.json(result.rows[0]);
@@ -143,8 +143,8 @@ app.get("/modul", async (req, res) => {
 
   let query = `
     SELECT m.*, j.*
-    FROM modul.modul m
-    LEFT JOIN modul.jenjang j ON m."idJenjang" = j."idJenjang"
+    FROM modul m
+    LEFT JOIN jenjang j ON m."idJenjang" = j."idJenjang"
   `;
   let params = [];
 
@@ -232,7 +232,7 @@ app.get("/modul/jenjang/:id", async (req, res) => {
 
   let sql = `
     SELECT *
-    FROM modul.modul
+    FROM modul
     WHERE "idJenjang" = $1
   `;
   let params = [idJenjang];
@@ -305,7 +305,7 @@ app.post("/modul", upload.single("file"), async (req, res) => {
 
     // Insert ke tabel modul
     const insertSql = `
-      INSERT INTO modul.modul ("idJenjang", "title", "desc", "name", "files", "idKategori")
+      INSERT INTO modul ("idJenjang", "title", "desc", "name", "files", "idKategori")
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *;
     `;
@@ -320,7 +320,7 @@ app.post("/modul", upload.single("file"), async (req, res) => {
     const idModul = insertedRows[0].idModul;
 
     // Ambil kembali data modul yang baru diinsert
-    const fetchSql = `SELECT * FROM modul.modul WHERE "idModul" = $1;`;
+    const fetchSql = `SELECT * FROM modul WHERE "idModul" = $1;`;
     const { rows: fetchedRows } = await pool.query(fetchSql, [idModul]);
 
     res.json({
@@ -349,7 +349,7 @@ app.delete("/modul/:id", async (req, res) => {
     const { id } = req.params;
 
     const sql = `
-      DELETE FROM modul.modul
+      DELETE FROM modul
       WHERE "idModul" = $1
       RETURNING *;
     `;
@@ -389,8 +389,8 @@ app.get("/modul/:id", async (req, res) => {
   // res.status(200).json({ data, status });
   const sql = `
     SELECT m.*, j."jenjang"
-    FROM modul.modul m
-    LEFT JOIN modul.jenjang j ON m."idJenjang" = j."idJenjang"
+    FROM modul m
+    LEFT JOIN jenjang j ON m."idJenjang" = j."idJenjang"
     WHERE m."idModul" = $1
     LIMIT 1;
   `;
@@ -420,7 +420,7 @@ app.get("/kategori", async (req, res) => {
        k."color",
        COUNT(m."idModul") AS count
       FROM kategori k
-      LEFT JOIN modul.modul m ON k."idKategori" = m."idKategori"
+      LEFT JOIN modul m ON k."idKategori" = m."idKategori"
       GROUP BY k."idKategori", k."kategori"
       ORDER BY k."idKategori" ASC;
     `);
