@@ -282,56 +282,51 @@ const uploadFileModul = async (filePath) => {
   }
 };
 
-// Endpoint upload modul
-app.post("/modul", upload.single("file"), async (req, res) => {
-  try {
-    const { idJenjang, title, desc, name, idKategori, link } = req.body;
-    const filePath = req.file?.path;
 
-    let fileUrl = null;
-    if(parseInt(idKategori) === 3){
-      if (!filePath) {
-        return res.status(400).json({ error: "File tidak ditemukan" });
+app.get('/cloudinary-signature', (req, res) => {
+  const timestamp = Math.round(new Date().getTime() / 1000);
+  const signature = cloudinary.utils.api_sign_request(
+    { timestamp },
+    process.env.CLOUD_API_SECRET
+  );
+  res.json({ timestamp, signature });
+});
+
+// Endpoint upload modul
+app.post("/modul", async (req, res) => {
+  try {
+    const { idJenjang, title, desc, name, idKategori, fileUrl, link } = req.body;
+
+    let finalUrl = null;
+    if (parseInt(idKategori) === 3) {
+      if (!fileUrl) {
+        return res.status(400).json({ error: "fileUrl dari Cloudinary wajib dikirim" });
       }
-      // Upload file ke Cloudinary
-      const result = await uploadFileModul(filePath);
-      fileUrl = result.secure_url;
+      finalUrl = fileUrl;
     } else {
       if (!link) {
         return res.status(400).json({ error: "Link diperlukan untuk kategori ini" });
       }
-      fileUrl = link;
+      finalUrl = link;
     }
 
-    // Insert ke tabel modul
     const insertSql = `
       INSERT INTO modul ("idJenjang", "title", "desc", "name", "files", "idKategori")
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *;
     `;
-    const insertParams = [idJenjang, title, desc, name, fileUrl, idKategori];
-
-    const { rows: insertedRows } = await pool.query(insertSql, insertParams);
-
-    if (!insertedRows?.[0]) {
-      throw new Error("Gagal menyimpan data modul");
-    }
-
-    const idModul = insertedRows[0].idModul;
-
-    // Ambil kembali data modul yang baru diinsert
-    const fetchSql = `SELECT * FROM modul WHERE "idModul" = $1;`;
-    const { rows: fetchedRows } = await pool.query(fetchSql, [idModul]);
+    const insertParams = [idJenjang, title, desc, name, finalUrl, idKategori];
+    const { rows } = await pool.query(insertSql, insertParams);
 
     res.json({
-      message: "Modul berhasil diupload",
-      fileUrl,
-      idModul,
-      data: fetchedRows[0],
+      message: "Modul berhasil disimpan",
+      fileUrl: finalUrl,
+      idModul: rows[0].idModul,
+      data: rows[0],
     });
   } catch (error) {
-    console.error("Error handling file upload:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error("Error saving modul:", error);
+    res.status(500).json({ error: error.message || "Internal Server Error" });
   }
 });
 
